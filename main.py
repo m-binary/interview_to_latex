@@ -7,47 +7,42 @@ TEX_BODY = r"""
 \section*{{{name}}}
 
 \begin{{minipage}}{{\textwidth}}
-    \begin{{tabbing}}
-    Wissenschaftliche Betreuerin: \hspace{{0.85cm}}\=\kill
-    Interviewpartner: \> {interviewpartner}\\[1mm]
-    Funktion: \> {funktion} \\[3mm]
-    Interviewer: \> {interviewer} \\[1mm]
-    Gesprächszeitpunkt: \> {zeitpunkt}\\[1mm]
-    Ort: \> {ort}\\[3mm]
-    Thema: \> {thema}\\
-    \end{{tabbing}}
-\end{{minipage}}
+		\begin{{tabbing}}
+		Wissenschaftliche Betreuerin: \hspace{{0.85cm}}\=\kill
+		Interviewpartner: \> {interviewpartner}\\[1mm]
+		Funktion: \> {funktion} \\[3mm]
+		Interviewer: \> {interviewer} \\[1mm]
+		Gesprächszeitpunkt: \> {zeitpunkt}\\[1mm]
+		Ort: \> {ort}\\[3mm]
+		Thema: \> {thema}\\
 
-\begin{{tabularx}}{{\textwidth}}{{|p{{2.5cm}}|Y|}}
+		\end{{tabbing}}
+	\end{{minipage}}
+
+\begin{{longtable}}{{|p{{2.5cm}}|p{{12.5cm}}|}}
 \hline
 {rows}
 \hline
-\end{{tabularx}}
+\end{{longtable}}
 """
-
 
 TEX_PREAMBLE = r"""
 \documentclass[11pt,a4paper]{article}
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
 \usepackage[ngerman]{babel}
+\usepackage{longtable}
 \usepackage{geometry}
 \usepackage{ragged2e}
 \usepackage{array}
 \usepackage{booktabs}
 \usepackage{hyperref}
 \usepackage{colortbl}
-\usepackage{ltablex}
-\keepXColumns
-\setlength\extrarowheight{2pt} % Zeilenhöhe leicht erhöhen
-\newcolumntype{Y}{>{\RaggedRight\arraybackslash}X} % Linksbündige X-Spalte
-
 \geometry{left=2.5cm,right=2.5cm,top=2.5cm,bottom=2.5cm}
 
 \begin{document}
 \raggedbottom
 """
-
 
 TEX_SIGNATURE_PAGE = r"""
 \newpage
@@ -78,7 +73,6 @@ Interviewer
 \end{{minipage}}
 """
 
-
 TEX_END = r"""
 
 \end{document}
@@ -90,14 +84,16 @@ def latex_escape(s: str, preserve_paragraphs: bool = False) -> str:
     if s is None:
         return ""
     s = str(s)
-    
+
     if preserve_paragraphs:
         # Preserve paragraph breaks BEFORE escaping backslashes
         # Use unique placeholders that won't interfere with escaping
         s = s.replace('\r\n', '\n')  # Normalize Windows line endings
-        s = s.replace('\n\n', '\x00DOUBLENEWLINE\x00')  # Double newlines -> paragraph break
-        s = s.replace('\n', '\x00SINGLENEWLINE\x00')  # Single newlines -> paragraph break
-    
+        # Double newlines -> paragraph break
+        s = s.replace('\n\n', '\x00DOUBLENEWLINE\x00')
+        # Single newlines -> paragraph break
+        s = s.replace('\n', '\x00SINGLENEWLINE\x00')
+
     replacements = {
         '\\': r'\textbackslash{}',
         '&': r'\&',
@@ -113,14 +109,17 @@ def latex_escape(s: str, preserve_paragraphs: bool = False) -> str:
     }
     for k, v in replacements.items():
         s = s.replace(k, v)
-    
+
     if preserve_paragraphs:
         # Now replace placeholders with LaTeX paragraph breaks
-        s = s.replace('\x00DOUBLENEWLINE\x00', '\n\n')  # Double newlines -> blank line in LaTeX
-        s = s.replace('\x00SINGLENEWLINE\x00', '\n\n')  # Single newlines also -> paragraph break
+        # Double newlines -> blank line in LaTeX
+        s = s.replace('\x00DOUBLENEWLINE\x00', '\n\n')
+        # Single newlines also -> paragraph break
+        s = s.replace('\x00SINGLENEWLINE\x00', '\n\n')
         # Clean up multiple spaces on each line
         lines = s.split('\n')
-        lines = [' '.join(line.split()) if line.strip() else '' for line in lines]
+        lines = [' '.join(line.split()) if line.strip()
+                 else '' for line in lines]
         s = '\n'.join(lines)
     else:
         # Collapse multiple whitespace/newlines into single space
@@ -140,21 +139,21 @@ def df_to_latex_rows(df: pd.DataFrame, use_last_name_only: bool = False) -> str:
     """Convert two-column dataframe (speaker, text) to LaTeX longtable rows with escaping."""
     lines = []
     prev_speaker = None
-    
+
     for _, row in df.iterrows():
         speaker_raw = str(row.iloc[0])
         if use_last_name_only:
             speaker_raw = extract_last_name(speaker_raw)
         speaker = latex_escape(speaker_raw)
         text = latex_escape(row.iloc[1], preserve_paragraphs=True)
-        
+
         # Add visual separator when speaker changes
         if prev_speaker is not None and prev_speaker != speaker:
             lines.append(r"\hline")
-        
+
         lines.append(f"{speaker} & {text} \\tabularnewline")
         prev_speaker = speaker
-    
+
     return "\n".join(lines)
 
 
@@ -164,10 +163,10 @@ def generate_interviewpartner_signatures(interviewpartner: str) -> str:
     import re
     partners = re.split(r'[,;&]|\s+und\s+|\s+and\s+', interviewpartner)
     partners = [p.strip() for p in partners if p.strip()]
-    
+
     if not partners:
         return ""
-    
+
     signature_blocks = []
     for partner in partners:
         block = r"""
@@ -186,33 +185,38 @@ Interviewpartner
 \end{{minipage}}
 """.format(partner=partner)
         signature_blocks.append(block)
-    
+
     return "\n\\vspace{2cm}\n".join(signature_blocks)
 
 
 def generate_tex(metadata: dict, df: pd.DataFrame, use_last_name_only: bool = False, include_signature: bool = True) -> str:
     rows = df_to_latex_rows(df, use_last_name_only)
     body = TEX_BODY.format(rows=rows, **metadata)
-    
+
     signature = ""
     if include_signature:
-        interviewpartner_sigs = generate_interviewpartner_signatures(metadata.get('interviewpartner', ''))
+        interviewpartner_sigs = generate_interviewpartner_signatures(
+            metadata.get('interviewpartner', ''))
         metadata_with_sigs = metadata.copy()
         metadata_with_sigs['interviewpartner_signatures'] = interviewpartner_sigs
         signature = TEX_SIGNATURE_PAGE.format(**metadata_with_sigs)
-    
+
     full = TEX_PREAMBLE + body + signature + TEX_END
     return full
 
 
 def app():
     st.title("Interview → LaTeX Konverter")
-    st.markdown("Lade eine Excel-Datei (.xlsx) mit zwei Spalten (ohne Kopfzeile): Teilnehmer | Inhalt")
+    st.markdown(
+        "Lade eine Excel-Datei (.xlsx) mit zwei Spalten (ohne Kopfzeile): Teilnehmer | Inhalt")
 
     # Metadata fields extracted from example
     with st.expander("Metadaten (werden in die LaTeX-Vorlage eingefügt)"):
-        name = st.text_input("Titel / Name (z.B. 'Expertengespräch mit Max Mustermann')", value="")
-        interviewpartner = st.text_input("Interviewpartner", value="")
+        name = st.text_input(
+            "Titel / Name (z.B. 'Expertengespräch mit Max Mustermann')", value="")
+        interviewpartner = st.text_input("Interviewpartner", value="",
+                                         help="Mehrere Namen mit Komma, Semikolon, 'und', 'and' oder '&' trennen. Beispiel: Max Mustermann, Anna Schmidt oder Max Mustermann und Anna Schmidt"
+                                         )
         funktion = st.text_input("Funktion", value="")
         interviewer = st.text_input("Interviewer", value="")
         zeitpunkt = st.text_input("Gesprächszeitpunkt", value="")
@@ -221,10 +225,10 @@ def app():
 
     # Display options
     st.subheader("Anzeigeoptionen")
-    use_last_name_only = st.checkbox("Nur Nachnamen in der Tabelle anzeigen", value=False, 
-                                      help="Zeigt nur den Nachnamen der Sprecher in der Interview-Tabelle an")
+    use_last_name_only = st.checkbox("Nur Nachnamen in der Tabelle anzeigen", value=False,
+                                     help="Zeigt nur den Nachnamen der Sprecher in der Interview-Tabelle an")
     include_signature = st.checkbox("Unterschriftenseite einfügen", value=True,
-                                     help="Fügt eine Bestätigungsseite am Ende des Dokuments ein")
+                                    help="Fügt eine Bestätigungsseite am Ende des Dokuments ein")
 
     uploaded = st.file_uploader("Excel-Datei (.xlsx)", type=["xlsx"])
 
@@ -232,7 +236,8 @@ def app():
         try:
             df = pd.read_excel(uploaded, header=None)
             if df.shape[1] < 2:
-                st.error("Die Excel-Datei muss mindestens zwei Spalten enthalten (Teilnehmer, Inhalt)")
+                st.error(
+                    "Die Excel-Datei muss mindestens zwei Spalten enthalten (Teilnehmer, Inhalt)")
                 return
             st.success(f"Geladen: {df.shape[0]} Zeilen")
             st.dataframe(df)
@@ -251,9 +256,11 @@ def app():
                     "ort": ort,
                     "thema": thema,
                 }
-                tex = generate_tex(metadata, df, use_last_name_only, include_signature)
+                tex = generate_tex(
+                    metadata, df, use_last_name_only, include_signature)
                 b = tex.encode("utf-8")
-                st.download_button("LaTeX-Datei herunterladen", data=b, file_name="interview.tex", mime="text/x-tex")
+                st.download_button("LaTeX-Datei herunterladen", data=b,
+                                   file_name="interview.tex", mime="text/x-tex")
 
         except Exception as e:
             st.error(f"Fehler beim Einlesen der Datei: {e}")
