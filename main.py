@@ -4,43 +4,50 @@ from io import BytesIO
 
 
 TEX_BODY = r"""
-\section*{{Expertengespräch mit {name}}}
+\section*{{{name}}}
 
 \begin{{minipage}}{{\textwidth}}
-		\begin{{tabbing}}
-		Wissenschaftliche Betreuerin: \hspace{{0.85cm}}\=\kill
-		Interviewpartner: \> {interviewpartner}\\[1mm]
-		Funktion: \> {funktion} \\[3mm]
-		Interviewer: \> {interviewer} \\[1mm]
-		Gesprächszeitpunkt: \> {zeitpunkt}\\[1mm]
-		Ort: \> {ort}\\[3mm]
-		Thema: \> {thema}\\
+    \begin{{tabbing}}
+    Wissenschaftliche Betreuerin: \hspace{{0.85cm}}\=\kill
+    Interviewpartner: \> {interviewpartner}\\[1mm]
+    Funktion: \> {funktion} \\[3mm]
+    Interviewer: \> {interviewer} \\[1mm]
+    Gesprächszeitpunkt: \> {zeitpunkt}\\[1mm]
+    Ort: \> {ort}\\[3mm]
+    Thema: \> {thema}\\
+    \end{{tabbing}}
+\end{{minipage}}
 
-		\end{{tabbing}}
-	\end{{minipage}}
-
-\begin{{longtable}}{{|p{{2cm}}|p{{13cm}}|}}
+\begin{{tabularx}}{{\textwidth}}{{|p{{2.5cm}}|Y|}}
 \hline
 {rows}
 \hline
-\end{{longtable}}
+\end{{tabularx}}
 """
+
 
 TEX_PREAMBLE = r"""
 \documentclass[11pt,a4paper]{article}
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
 \usepackage[ngerman]{babel}
-\usepackage{longtable}
 \usepackage{geometry}
 \usepackage{ragged2e}
 \usepackage{array}
 \usepackage{booktabs}
 \usepackage{hyperref}
+\usepackage{colortbl}
+\usepackage{ltablex}
+\keepXColumns
+\setlength\extrarowheight{2pt} % Zeilenhöhe leicht erhöhen
+\newcolumntype{Y}{>{\RaggedRight\arraybackslash}X} % Linksbündige X-Spalte
+
 \geometry{left=2.5cm,right=2.5cm,top=2.5cm,bottom=2.5cm}
 
 \begin{document}
+\raggedbottom
 """
+
 
 TEX_SIGNATURE_PAGE = r"""
 \newpage
@@ -52,19 +59,7 @@ Hiermit bestätigen die Unterzeichnenden, dass die Inhalte des vorliegenden Expe
 
 \vspace{{2cm}}
 
-\noindent
-\begin{{minipage}}{{0.45\textwidth}}
-\centering
-\rule{{0.8\linewidth}}{{0.4pt}}\\
-Ort, Datum
-\end{{minipage}}
-\hfill
-\begin{{minipage}}{{0.45\textwidth}}
-\centering
-\rule{{0.8\linewidth}}{{0.4pt}}\\
-{interviewpartner}\\
-Interviewpartner
-\end{{minipage}}
+{interviewpartner_signatures}
 
 \vspace{{2cm}}
 
@@ -83,34 +78,53 @@ Interviewer
 \end{{minipage}}
 """
 
+
 TEX_END = r"""
 
 \end{document}
 """
 
 
-def latex_escape(s: str) -> str:
+def latex_escape(s: str, preserve_paragraphs: bool = False) -> str:
     """Escape common LaTeX special characters in a string."""
     if s is None:
         return ""
     s = str(s)
+    
+    if preserve_paragraphs:
+        # Preserve paragraph breaks BEFORE escaping backslashes
+        # Use unique placeholders that won't interfere with escaping
+        s = s.replace('\r\n', '\n')  # Normalize Windows line endings
+        s = s.replace('\n\n', '\x00DOUBLENEWLINE\x00')  # Double newlines -> paragraph break
+        s = s.replace('\n', '\x00SINGLENEWLINE\x00')  # Single newlines -> paragraph break
+    
     replacements = {
-        '\\': r'\\textbackslash{}',
-        '&': r'\\&',
-        '%': r'\\%',
-        '$': r'\\$',
-        '#': r'\\#',
-        '_': r'\\_',
-        '{': r'\\{',
-        '}': r'\\}',
-        '~': r'\\textasciitilde{}',
-        '^': r'\\^{}',
-        '€': r'\\euro{}',
+        '\\': r'\textbackslash{}',
+        '&': r'\&',
+        '%': r'\%',
+        '$': r'\$',
+        '#': r'\#',
+        '_': r'\_',
+        '{': r'\{',
+        '}': r'\}',
+        '~': r'\textasciitilde{}',
+        '^': r'\^{}',
+        '€': r'\euro{}',
     }
     for k, v in replacements.items():
         s = s.replace(k, v)
-    # Collapse multiple whitespace/newlines into single space
-    s = ' '.join(s.split())
+    
+    if preserve_paragraphs:
+        # Now replace placeholders with LaTeX paragraph breaks
+        s = s.replace('\x00DOUBLENEWLINE\x00', '\n\n')  # Double newlines -> blank line in LaTeX
+        s = s.replace('\x00SINGLENEWLINE\x00', '\n\n')  # Single newlines also -> paragraph break
+        # Clean up multiple spaces on each line
+        lines = s.split('\n')
+        lines = [' '.join(line.split()) if line.strip() else '' for line in lines]
+        s = '\n'.join(lines)
+    else:
+        # Collapse multiple whitespace/newlines into single space
+        s = ' '.join(s.split())
     return s
 
 
@@ -125,14 +139,55 @@ def extract_last_name(full_name: str) -> str:
 def df_to_latex_rows(df: pd.DataFrame, use_last_name_only: bool = False) -> str:
     """Convert two-column dataframe (speaker, text) to LaTeX longtable rows with escaping."""
     lines = []
+    prev_speaker = None
+    
     for _, row in df.iterrows():
         speaker_raw = str(row.iloc[0])
         if use_last_name_only:
             speaker_raw = extract_last_name(speaker_raw)
         speaker = latex_escape(speaker_raw)
-        text = latex_escape(row.iloc[1])
-        lines.append(f"{speaker} & {text}\\\\")
+        text = latex_escape(row.iloc[1], preserve_paragraphs=True)
+        
+        # Add visual separator when speaker changes
+        if prev_speaker is not None and prev_speaker != speaker:
+            lines.append(r"\hline")
+        
+        lines.append(f"{speaker} & {text} \\tabularnewline")
+        prev_speaker = speaker
+    
     return "\n".join(lines)
+
+
+def generate_interviewpartner_signatures(interviewpartner: str) -> str:
+    """Generate signature blocks for one or more interview partners."""
+    # Split by common separators (comma, semicolon, 'und', 'and', '&')
+    import re
+    partners = re.split(r'[,;&]|\s+und\s+|\s+and\s+', interviewpartner)
+    partners = [p.strip() for p in partners if p.strip()]
+    
+    if not partners:
+        return ""
+    
+    signature_blocks = []
+    for partner in partners:
+        block = r"""
+\noindent
+\begin{{minipage}}{{0.45\textwidth}}
+\centering
+\rule{{0.8\linewidth}}{{0.4pt}}\\
+Ort, Datum
+\end{{minipage}}
+\hfill
+\begin{{minipage}}{{0.45\textwidth}}
+\centering
+\rule{{0.8\linewidth}}{{0.4pt}}\\
+{partner}\\
+Interviewpartner
+\end{{minipage}}
+""".format(partner=partner)
+        signature_blocks.append(block)
+    
+    return "\n\\vspace{2cm}\n".join(signature_blocks)
 
 
 def generate_tex(metadata: dict, df: pd.DataFrame, use_last_name_only: bool = False, include_signature: bool = True) -> str:
@@ -141,7 +196,10 @@ def generate_tex(metadata: dict, df: pd.DataFrame, use_last_name_only: bool = Fa
     
     signature = ""
     if include_signature:
-        signature = TEX_SIGNATURE_PAGE.format(**metadata)
+        interviewpartner_sigs = generate_interviewpartner_signatures(metadata.get('interviewpartner', ''))
+        metadata_with_sigs = metadata.copy()
+        metadata_with_sigs['interviewpartner_signatures'] = interviewpartner_sigs
+        signature = TEX_SIGNATURE_PAGE.format(**metadata_with_sigs)
     
     full = TEX_PREAMBLE + body + signature + TEX_END
     return full
